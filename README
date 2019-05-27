@@ -1,0 +1,47 @@
+This repository accompanies the following issue:
+
+https://github.com/jruby/jruby/issues/5746
+
+Quoth RFC-7468:
+
+   There is exactly one space character (SP) separating the "BEGIN" or
+   "END" from the label.  There are exactly five hyphen-minus (also
+   known as dash) characters ("-") on both ends of the encapsulation
+   boundaries, no more, no less.
+
+https://tools.ietf.org/html/rfc7486
+
+Whereas OpenSSL for Ruby correctly does not parse a PEM cert with an incorrect number of hyphen-minus ("-") around the label, JRuby-OpenSSL will incorrectly parse this and return the cert.
+
+The implication is that if JRuby-OpenSSL is used to validate cert provisioning for later OpenSSL-linked application consumption, loading the cert will fail at the later step. This has different behaviour depending on the application; some fall back to no-SSL/no-TLS operation, some fail to start. (The latter behaviour was encountered.)
+
+Failing to reproduce using the system Ruby:
+
+$ /usr/bin/ruby jruby-openssl-rfc7468-poc1.rb 
+Result 1: Correctly parses RFC-7468 compliant PEM.
+Result 4: Correctly does not parse RFC-7468 non-compliant PEM.
+
+Reproducing using the current JRuby:
+
+$ cd jruby-openssl-rfc7468
+$ tar -C /tmp -xf ~/files/downloads/jruby-dist-9.2.7.0-bin.tar.gz 
+$ export PATH=/tmp/jruby-9.2.7.0/bin:$PATH
+$ jruby jruby-openssl-rfc7468-poc1.rb 
+Result 1: Correctly parses RFC-7468 compliant PEM.
+Result 3: Incorrectly parses RFC-7468 non-compliant PEM.
+
+I'm filing this here because of the differing behaviour in JRuby-OpenSSL versus OpenSSL For Ruby, the former being documented as "an add-on gem for JRuby that emulates the Ruby OpenSSL native library".
+
+I apologize for no patch, I am not a programmer and couldn't figure out how JRuby-OpenSSL and Bouncy Castle might interact to correctly fail on invalid input here.
+
+I suspect the issue may be in main/java/org/jruby/ext/openssl/x509store/PEMInputOutput.java, there are a bunch of places where the strings are concatenated as beginning-label but no end/after. Here's one, there are more:
+
+return new X509AuxCertificate(readCertificate(reader,BEF_E+PEM_STRING_X509));
+
+For posterity, way above that line the variables are set as follows:
+
+public static final String PEM_STRING_X509="CERTIFICATE";
+public static final String BEF = "-----";
+public static final String AFT = "-----";
+public static final String BEF_G = BEF + "BEGIN ";
+public static final String BEF_E = BEF + "END ";
